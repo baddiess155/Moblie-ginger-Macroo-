@@ -10,7 +10,7 @@ local CONFIG = {
 	SlotCount  = 5,      -- video shows Slot 1-5 on a scrolling list; more may exist (unknown)
 	ComboCount = 2,      -- video shows Combo 1 and Combo 2
 	SaveFile   = "ComboDeck_settings.json",
-	Title      = "ComboDeck",
+	Title      = "CHris moblie macro",
 
 	-- Auto reload. Nothing below comes from your video except that the RPG shows an ammo counter like "0/11".
 	ReloadTool        = "RPG",            -- ASSUMPTION: tool name guessed from the HUD text; change it in the Reload tab
