@@ -10,7 +10,7 @@ local CONFIG = {
 	SlotCount  = 5,      -- video shows Slot 1-5 on a scrolling list; more may exist (unknown)
 	ComboCount = 2,      -- video shows Combo 1 and Combo 2
 	SaveFile   = "ComboDeck_settings.json",
-	Title      = "ComboDeck",
+	Title      = "Chris macro",
 }
 
 local Players          = game:GetService("Players")
