@@ -10,7 +10,7 @@ local CONFIG = {
 	SlotCount  = 5,      -- video shows Slot 1-5 on a scrolling list; more may exist (unknown)
 	ComboCount = 2,      -- video shows Combo 1 and Combo 2
 	SaveFile   = "ComboDeck_settings.json",
-	Title      = "ComboDeck",
+	Title      = "Chris moblie macro",
 	-- Auto stomp. UNKNOWN game values: set these two functions (recipe in the reply) or the feature stays off.
 	IsDowned     = nil,   -- function(otherPlayer) -> boolean: true when that player can be stomped
 	StompFn      = nil,   -- function(otherPlayer): performs the stomp, e.g. a remote call captured with the logger
