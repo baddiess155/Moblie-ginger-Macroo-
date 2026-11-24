@@ -151,6 +151,10 @@ local DEFAULTS = {
 	mobileButtons = UserInputService.TouchEnabled,
 	-- Saved positions (-1 = unset)
 	winPosX = -1, winPosY = -1, btnPosX = -1, btnPosY = -1, comboPosX = -1, comboPosY = -1,
+	-- Combo triggers (on-screen buttons): size, reposition mode, per-button positions (-1 = default stack)
+	triggerW = 89, triggerH = 42, repositionTriggers = false,
+	trigX1 = -1, trigY1 = -1, trigX2 = -1, trigY2 = -1, trigX3 = -1, trigY3 = -1,
+	trigX4 = -1, trigY4 = -1, trigX5 = -1, trigY5 = -1,
 }
 
 local Store = { values = {}, subs = {}, combos = {}, whitelist = {}, wlSubs = {}, pending = false }
@@ -1134,7 +1138,7 @@ function UI.lockScroll(locked)
 	for _, page in pairs(UI.pages) do page.ScrollingEnabled = not locked end
 end
 
-function UI.makeDraggable(handle, target, onDone, onTap)
+function UI.makeDraggable(handle, target, onDone, onTap, canDrag)
 	local dragging, activeInput, dragStart, startPos, moved = false, nil, nil, nil, 0
 	Janitor.add(handle.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
@@ -1147,7 +1151,7 @@ function UI.makeDraggable(handle, target, onDone, onTap)
 		if isMove or input == activeInput then
 			local d = input.Position - dragStart
 			moved = math.max(moved, d.Magnitude)
-			if moved >= 8 then
+			if moved >= 8 and (not canDrag or canDrag()) then
 				target.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
 			end
 		end
@@ -1157,7 +1161,7 @@ function UI.makeDraggable(handle, target, onDone, onTap)
 			dragging = false
 			if moved < 8 then
 				if onTap then onTap() end
-			else
+			elseif not canDrag or canDrag() then
 				local camera = workspace.CurrentCamera
 				local x, y = target.AbsolutePosition.X, target.AbsolutePosition.Y
 				if camera then
@@ -2173,6 +2177,12 @@ function Pages.buildSettings()
 	})
 	addSection("Settings", "Mobile", {
 		{ type = "toggle", key = "mobileButtons", title = "Mobile Combo Buttons", desc = "Shows on-screen C1-C4 and ALL buttons you can tap. Drag the strip on top to move them." },
+		{ type = "toggle", key = "repositionTriggers", title = "Reposition Triggers",
+			desc = "On: drag each combo trigger to where you want it (they get a white outline and won't fire). Off: tap them to run combos." },
+		{ type = "slider", key = "triggerW", min = 50, max = 200, step = 1, suffix = " px", title = "Trigger Width",
+			desc = "Width of each combo trigger. Default 89." },
+		{ type = "slider", key = "triggerH", min = 28, max = 90, step = 1, suffix = " px", title = "Trigger Height",
+			desc = "Height of each combo trigger. Default 42." },
 		{ type = "button", title = "Reset UI Position", desc = "Puts the menu, Chris button and combo buttons back in their default spots.", button = "RESET",
 			run = function() UI.resetPositions() end },
 	})
@@ -2201,61 +2211,75 @@ end
 -- ---------------------------------------------------------------------------
 -- Mobile combo buttons (C1-C4 and ALL)
 -- ---------------------------------------------------------------------------
-local COMBO_BUTTON_SIZE, COMBO_GAP, COMBO_HANDLE = 56, 6, 20
-local COMBO_PANEL_HEIGHT = COMBO_HANDLE + (CONFIG.COMBO_COUNT + 1) * (COMBO_BUTTON_SIZE + COMBO_GAP)
+local COMBO_GAP = 8
+local TRIGGER_COUNT = CONFIG.COMBO_COUNT + 1 -- COMBO 1..4 plus ALL COMBOS
 
-function UI.defaultComboPosition()
-	return UDim2.new(0, 16, 0.5, -math.floor(COMBO_PANEL_HEIGHT / 2))
+-- Places every trigger at its saved spot, or in a default stack on the left edge.
+function UI.layoutTriggers()
+	if not UI.triggers then return end
+	local w, h = Store.get("triggerW"), Store.get("triggerH")
+	local camera = workspace.CurrentCamera
+	local view = camera and camera.ViewportSize or Vector2.new(800, 400)
+	local total = TRIGGER_COUNT * h + (TRIGGER_COUNT - 1) * COMBO_GAP
+	for i, t in ipairs(UI.triggers) do
+		t.button.Size = UDim2.fromOffset(w, h)
+		t.button.TextSize = math.clamp(math.floor(h * 0.42), 10, 26)
+		local x, y = Store.get("trigX" .. i), Store.get("trigY" .. i)
+		if x >= 0 and y >= 0 then
+			t.button.Position = UDim2.fromOffset(x, y)
+		else
+			t.button.Position = UDim2.fromOffset(16, math.max(8, (view.Y - total) / 2 + (i - 1) * (h + COMBO_GAP)))
+		end
+	end
 end
 
 function UI.buildComboPanel()
-	local x, y = Store.get("comboPosX"), Store.get("comboPosY")
+	-- Full-screen, invisible container so each trigger can sit anywhere on screen.
 	UI.comboPanel = new("Frame", {
-		BackgroundTransparency = 1, Size = UDim2.fromOffset(COMBO_BUTTON_SIZE, COMBO_PANEL_HEIGHT),
-		Position = (x >= 0 and y >= 0) and UDim2.fromOffset(x, y) or UI.defaultComboPosition(),
-		Visible = Store.get("mobileButtons"), ZIndex = 15,
+		BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Visible = Store.get("mobileButtons"), ZIndex = 15,
 	}, UI.screen)
-	local handle = new("TextLabel", {
-		Size = UDim2.new(1, 0, 0, COMBO_HANDLE), Text = "drag", Font = Enum.Font.GothamMedium, TextSize = 11,
-		BackgroundTransparency = 0.2, BorderSizePixel = 0, Active = true, ZIndex = 15,
-	}, UI.comboPanel)
-	Theme.bind(handle, "BackgroundColor3", "bg")
-	Theme.bind(handle, "TextColor3", "dim")
-	corner(handle, 8)
+	UI.triggers = {}
 	local actions = {}
 	for i = 1, CONFIG.COMBO_COUNT do
-		actions[#actions + 1] = { text = "C" .. i, run = function() Macro.run(i) end }
+		actions[#actions + 1] = { text = "COMBO " .. i, run = function() Macro.run(i) end }
 	end
-	actions[#actions + 1] = { text = "ALL", run = Macro.runAll }
+	actions[#actions + 1] = { text = "ALL COMBOS", run = Macro.runAll }
+	local PILL_BLACK = Color3.fromRGB(0, 0, 0)
 	for i, action in ipairs(actions) do
 		local b = new("TextButton", {
-			Size = UDim2.new(1, 0, 0, COMBO_BUTTON_SIZE), Text = action.text, Font = Enum.Font.GothamBold, TextSize = 16,
-			Position = UDim2.fromOffset(0, COMBO_HANDLE + COMBO_GAP + (i - 1) * (COMBO_BUTTON_SIZE + COMBO_GAP)),
-			AutoButtonColor = false, BorderSizePixel = 0, BackgroundTransparency = 0.1, ZIndex = 15,
+			Size = UDim2.fromOffset(89, 42), Text = action.text, Font = Enum.Font.GothamBold, TextSize = 17,
+			AutoButtonColor = false, BorderSizePixel = 0, BackgroundTransparency = 0.12, ZIndex = 15,
+			BackgroundColor3 = PILL_BLACK, TextColor3 = Color3.new(1, 1, 1), TextScaled = false,
 		}, UI.comboPanel)
-		Theme.bind(b, "BackgroundColor3", "bg")
-		Theme.bind(b, "TextColor3", "text")
-		corner(b, 14)
-		stroke(b, "accent", 1.5, 0.35)
-		b.Activated:Connect(function()
-			b.BackgroundColor3 = Theme.current.accent
-			UI.tween(b, { BackgroundColor3 = Theme.current.bg })
+		new("UICorner", { CornerRadius = UDim.new(0.5, 0) }, b)
+		local ring = new("UIStroke", {
+			Color = Color3.new(1, 1, 1), Thickness = 2, Transparency = 0.1,
+			ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Enabled = Store.get("repositionTriggers"),
+		}, b)
+		UI.triggers[i] = { button = b, ring = ring }
+		UI.makeDraggable(b, b, function(px, py)
+			Store.set("trigX" .. i, px)
+			Store.set("trigY" .. i, py)
+		end, function()
+			if Store.get("repositionTriggers") then return end -- taps do nothing while repositioning
+			b.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+			UI.tween(b, { BackgroundColor3 = PILL_BLACK })
 			action.run()
-		end)
+		end, function() return Store.get("repositionTriggers") end)
 	end
-	UI.makeDraggable(handle, UI.comboPanel, function(px, py)
-		Store.set("comboPosX", px)
-		Store.set("comboPosY", py)
-	end)
+	UI.layoutTriggers()
 end
 
 function UI.resetPositions()
 	Store.set("winPosX", -1); Store.set("winPosY", -1)
 	Store.set("btnPosX", -1); Store.set("btnPosY", -1)
 	Store.set("comboPosX", -1); Store.set("comboPosY", -1)
+	for i = 1, TRIGGER_COUNT do
+		Store.set("trigX" .. i, -1); Store.set("trigY" .. i, -1)
+	end
 	UI.main.Position = UI.defaultWindowPosition()
 	UI.chris.Position = UDim2.fromOffset(16, 64)
-	UI.comboPanel.Position = UI.defaultComboPosition()
+	UI.layoutTriggers()
 	UI.restorePos = nil
 end
 
@@ -2308,6 +2332,11 @@ react("backgroundImage", UI.applyBackground)
 react("backgroundImageId", UI.applyBackground)
 react("backgroundTransparency", UI.applyBackground)
 react("mobileButtons", function(v) UI.comboPanel.Visible = v end)
+react("triggerW", UI.layoutTriggers)
+react("triggerH", UI.layoutTriggers)
+react("repositionTriggers", function(v)
+	for _, t in ipairs(UI.triggers) do t.ring.Enabled = v end
+end)
 for _, key in ipairs({ "crosshair", "crosshairStyle", "customCrosshairId", "crosshairSize", "crosshairX", "crosshairY" }) do
 	react(key, Crosshair.refresh)
 end
